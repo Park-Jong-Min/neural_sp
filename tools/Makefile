@@ -2,7 +2,7 @@
 # PYTHON := /usr/bin/python3.7
 PYTHON :=
 # The python version installed in the conda setup
-PYTHON_VERSION := 3.7
+PYTHON_VERSION := 3.7.6
 CUDA_VERSION := 10.1
 PYTORCH_VERSION := 1.5.1
 # Use a prebuild Kaldi to omit the installation
@@ -22,13 +22,26 @@ ifeq ($(strip $(TOOL)),)
 	TOOL := $(PWD)
 endif
 
-export CONDA=/home/jmpark/.conda/envs/asr
+CONDA=$(TOOL)/miniconda
 
 .PHONY: all clean
 
 all: kaldi.done python check_install extra
 python: neural_sp.done warp-ctc.done
 extra: sentencepiece.done nkf.done moses.done mwerSegmenter.done
+
+# miniconda
+miniconda.done:
+	mkdir -p $(TOOL)
+	if [ -e $(CONDA) ]; then rm -rf $(CONDA); fi
+	test -f miniconda.sh || wget $(CONDA_URL) -O $(TOOL)/miniconda.sh
+	test -d $(CONDA) || bash $(TOOL)/miniconda.sh -b -p $(CONDA)
+	. $(CONDA)/bin/activate && conda install -y setuptools -c anaconda
+	. $(CONDA)/bin/activate && conda install -y pip -c anaconda
+	. $(CONDA)/bin/activate && conda update -y conda
+	. $(CONDA)/bin/activate && conda install -y python=$(PYTHON_VERSION)
+	. $(CONDA)/bin/activate && conda info -a
+	touch miniconda.done
 
 # kaldi
 ifneq ($(strip $(KALDI)),)
