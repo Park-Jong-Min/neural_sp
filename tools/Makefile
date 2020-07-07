@@ -21,7 +21,8 @@ TOOL :=
 ifeq ($(strip $(TOOL)),)
 	TOOL := $(PWD)
 endif
-CONDA=/home/jmpark/.conda/envs/asr
+
+export CONDA=/home/jmpark/.conda/envs/asr
 
 .PHONY: all clean
 
