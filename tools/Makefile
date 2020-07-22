@@ -6,7 +6,7 @@ PYTHON_VERSION := 3.7.7
 CUDA_VERSION := 10.1
 PYTORCH_VERSION := 1.5.1
 # Use a prebuild Kaldi to omit the installation
-KALDI :=
+KALDI := /home/jmpark/github_local/neural_sp/tools/kaldi
 
 # Both Miniconda2/3 can install any Python versions
 CONDA_URL := https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
