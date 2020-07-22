@@ -66,6 +66,7 @@ def build_encoder(args):
             conv_param_init=args.param_init,
             task_specific_layer=args.task_specific_layer,
             param_init=args.transformer_param_init,
+            clamp_len=getattr(args, 'transformer_enc_clamp_len', -1),
             chunk_size_left=args.lc_chunk_size_left,
             chunk_size_current=args.lc_chunk_size_current,
             chunk_size_right=args.lc_chunk_size_right,
@@ -82,7 +83,7 @@ def build_encoder(args):
             n_layers_sub1=args.enc_n_layers_sub1,
             n_layers_sub2=args.enc_n_layers_sub2,
             d_model=args.transformer_d_model,
-            d_ff=args.transformer_d_model * 4,
+            d_ff=args.transformer_d_ff,
             ffn_bottleneck_dim=getattr(args, 'transformer_ffn_bottleneck_dim', 0),
             last_proj_dim=args.transformer_d_model if 'transformer' in args.dec_type else 0,
             pe_type=args.transformer_enc_pe_type,
@@ -107,6 +108,7 @@ def build_encoder(args):
             conv_param_init=args.param_init,
             task_specific_layer=args.task_specific_layer,
             param_init=args.transformer_param_init,
+            clamp_len=getattr(args, 'transformer_enc_clamp_len', -1),
             chunk_size_left=args.lc_chunk_size_left,
             chunk_size_current=args.lc_chunk_size_current,
             chunk_size_right=args.lc_chunk_size_right,
@@ -116,7 +118,7 @@ def build_encoder(args):
         from neural_sp.models.seq2seq.encoders.rnn import RNNEncoder
         encoder = RNNEncoder(
             input_dim=args.input_dim if args.input_type == 'speech' else args.emb_dim,
-            rnn_type=args.enc_type,
+            enc_type=args.enc_type,
             n_units=args.enc_n_units,
             n_projs=args.enc_n_projs,
             last_proj_dim=args.transformer_d_model if 'transformer' in args.dec_type else 0,

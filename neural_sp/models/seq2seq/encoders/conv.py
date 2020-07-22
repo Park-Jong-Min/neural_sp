@@ -142,15 +142,15 @@ class ConvEncoder(EncoderBase):
 
     @property
     def n_frames_context(self):
-        n_frame = 0
+        n_frames = 0
         factor_tmp = self.subsampling_factor
         if factor_tmp > 1:
             for _ in range(int(math.log(factor_tmp, 2))):
-                n_frame += factor_tmp
+                n_frames += factor_tmp
                 factor_tmp //= 2
                 if factor_tmp < 2:
                     break
-        return n_frame
+        return n_frames
 
     def reset_parameters(self, param_init):
         """Initialize parameters with lecun style."""
@@ -207,7 +207,7 @@ class Conv1dBlock(EncoderBase):
                                kernel_size=kernel_size,
                                stride=stride,
                                padding=1)
-        self._odim = update_lens_1d([in_channel], self.conv1)[0].item()
+        self._odim = update_lens_1d(torch.IntTensor([in_channel]), self.conv1)[0].item()
         self.batch_norm1 = nn.BatchNorm1d(out_channel) if batch_norm else lambda x: x
         self.layer_norm1 = nn.LayerNorm(out_channel,
                                         eps=layer_norm_eps) if layer_norm else lambda x: x
@@ -218,7 +218,7 @@ class Conv1dBlock(EncoderBase):
                                kernel_size=kernel_size,
                                stride=stride,
                                padding=1)
-        self._odim = update_lens_1d([self._odim], self.conv2)[0].item()
+        self._odim = update_lens_1d(torch.IntTensor([self._odim]), self.conv2)[0].item()
         self.batch_norm2 = nn.BatchNorm1d(out_channel) if batch_norm else lambda x: x
         self.layer_norm2 = nn.LayerNorm(out_channel,
                                         eps=layer_norm_eps) if layer_norm else lambda x: x
@@ -231,7 +231,7 @@ class Conv1dBlock(EncoderBase):
                                      padding=0,
                                      ceil_mode=True)
             # NOTE: If ceil_mode is False, remove last feature when the dimension of features are odd.
-            self._odim = update_lens_1d([self._odim], self.pool)[0].item()
+            self._odim = update_lens_1d(torch.IntTensor([self._odim]), self.pool)[0].item()
             if self._odim % 2 != 0:
                 self._odim = (self._odim // 2) * 2
                 # TODO(hirofumi0810): more efficient way?
@@ -296,7 +296,7 @@ class Conv2dBlock(EncoderBase):
                                kernel_size=tuple(kernel_size),
                                stride=tuple(stride),
                                padding=(1, 1))
-        self._odim = update_lens_2d([input_dim], self.conv1, dim=1)[0].item()
+        self._odim = update_lens_2d(torch.IntTensor([input_dim]), self.conv1, dim=1)[0].item()
         self.batch_norm1 = nn.BatchNorm2d(out_channel) if batch_norm else lambda x: x
         self.layer_norm1 = LayerNorm2D(out_channel, self._odim,
                                        eps=layer_norm_eps) if layer_norm else lambda x: x
@@ -307,7 +307,7 @@ class Conv2dBlock(EncoderBase):
                                kernel_size=tuple(kernel_size),
                                stride=tuple(stride),
                                padding=(1, 1))
-        self._odim = update_lens_2d([self._odim], self.conv2, dim=1)[0].item()
+        self._odim = update_lens_2d(torch.IntTensor([self._odim]), self.conv2, dim=1)[0].item()
         self.batch_norm2 = nn.BatchNorm2d(out_channel) if batch_norm else lambda x: x
         self.layer_norm2 = LayerNorm2D(out_channel, self._odim,
                                        eps=layer_norm_eps) if layer_norm else lambda x: x
@@ -321,7 +321,7 @@ class Conv2dBlock(EncoderBase):
                                      padding=(0, 0),
                                      ceil_mode=True)
             # NOTE: If ceil_mode is False, remove last feature when the dimension of features are odd.
-            self._odim = update_lens_2d([self._odim], self.pool, dim=1)[0].item()
+            self._odim = update_lens_2d(torch.IntTensor([self._odim]), self.pool, dim=1)[0].item()
             if self._odim % 2 != 0:
                 self._odim = (self._odim // 2) * 2
                 # TODO(hirofumi0810): more efficient way?
@@ -335,10 +335,8 @@ class Conv2dBlock(EncoderBase):
         Args:
             xs (FloatTensor): `[B, C_i, T, F]`
             xlens (IntTensor): `[B]` (on CPU)
-            lookback (bool): truncate the leftmost frames
-                because of lookback frames for context
-            lookahead (bool): truncate the rightmost frames
-                because of lookahead frames for context
+            lookback (bool): truncate leftmost frames for lookback in CNN context
+            lookahead (bool): truncate rightmost frames for lookahead in CNN context
         Returns:
             xs (FloatTensor): `[B, C_o, T', F']`
             xlens (IntTensor): `[B]` (on CPU)
@@ -353,9 +351,13 @@ class Conv2dBlock(EncoderBase):
         xs = self.dropout(xs)
         xlens = update_lens_2d(xlens, self.conv1, dim=0)
         if lookback and xs.size(2) > self.conv1.stride[0]:
+            xmax = xs.size(2)
             xs = xs[:, :, self.conv1.stride[0]:]
+            xlens = xlens - (xmax - xs.size(2))
         if lookahead and xs.size(2) > self.conv1.stride[0]:
+            xmax = xs.size(2)
             xs = xs[:, :, :xs.size(2) - self.conv1.stride[0]]
+            xlens = xlens - (xmax - xs.size(2))
 
         xs = self.conv2(xs)
         xs = self.batch_norm2(xs)
@@ -366,9 +368,13 @@ class Conv2dBlock(EncoderBase):
         xs = self.dropout(xs)
         xlens = update_lens_2d(xlens, self.conv2, dim=0)
         if lookback and xs.size(2) > self.conv2.stride[0]:
+            xmax = xs.size(2)
             xs = xs[:, :, self.conv2.stride[0]:]
+            xlens = xlens - (xmax - xs.size(2))
         if lookahead and xs.size(2) > self.conv2.stride[0]:
+            xmax = xs.size(2)
             xs = xs[:, :, :xs.size(2) - self.conv2.stride[0]]
+            xlens = xlens - (xmax - xs.size(2))
 
         if self.pool is not None:
             xs = self.pool(xs)
@@ -405,15 +411,17 @@ def update_lens_1d(seq_lens, layer):
     """Update lenghts (frequency or time).
 
     Args:
-        seq_lens (list or IntTensor):
+        seq_lens (IntTensor): `[B]`
         layer (nn.Conv1d or nn.MaxPool1d):
     Returns:
-        seq_lens (IntTensor):
+        seq_lens (IntTensor): `[B]`
 
     """
     if seq_lens is None:
         return seq_lens
+    assert isinstance(seq_lens, torch.IntTensor)
     assert type(layer) in [nn.Conv1d, nn.MaxPool1d]
+    # seq_lens = [_update_1d(seq_len.item(), layer) for seq_len in seq_lens]
     seq_lens = [_update_1d(seq_len, layer) for seq_len in seq_lens]
     seq_lens = torch.IntTensor(seq_lens)
     return seq_lens
@@ -432,16 +440,18 @@ def update_lens_2d(seq_lens, layer, dim=0):
     """Update lenghts (frequency or time).
 
     Args:
-        seq_lens (list or IntTensor):
+        seq_lens (IntTensor): `[B]`
         layer (nn.Conv2d or nn.MaxPool2d):
         dim (int):
     Returns:
-        seq_lens (IntTensor):
+        seq_lens (IntTensor): `[B]`
 
     """
     if seq_lens is None:
         return seq_lens
+    assert isinstance(seq_lens, torch.IntTensor)
     assert type(layer) in [nn.Conv2d, nn.MaxPool2d]
+    # seq_lens = [_update_2d(seq_len.item(), layer, dim) for seq_len in seq_lens]
     seq_lens = [_update_2d(seq_len, layer, dim) for seq_len in seq_lens]
     seq_lens = torch.IntTensor(seq_lens)
     return seq_lens

@@ -45,49 +45,49 @@ class TransformerDecoder(DecoderBase):
             unk (int): index for <unk>
             pad (int): index for <pad>
             blank (int): index for <blank>
-        enc_n_units (int): number of units of the encoder outputs
+        enc_n_units (int): number of units of encoder outputs
         attn_type (str): type of attention mechanism
         n_heads (int): number of attention heads
         n_layers (int): number of self-attention layers
         d_model (int): dimension of MultiheadAttentionMechanism
         d_ff (int): dimension of PositionwiseFeedForward
-        ffn_bottleneck_dim (int): bottleneck dimension for the light-weight FFN layer
+        ffn_bottleneck_dim (int): bottleneck dimension for light-weight FFN layer
         pe_type (str): type of positional encoding
         layer_norm_eps (float): epsilon value for layer normalization
         ffn_activation (str): nonolinear function for PositionwiseFeedForward
         vocab (int): number of nodes in softmax layer
-        tie_embedding (bool): tie parameters of the embedding and output layers
+        tie_embedding (bool): tie parameters of embedding and output layers
         dropout (float): dropout probability for linear layers
-        dropout_emb (float): dropout probability for the embedding layer
+        dropout_emb (float): dropout probability for embedding layer
         dropout_att (float): dropout probability for attention distributions
         dropout_layer (float): LayerDrop probability for layers
         dropout_head (float): HeadDrop probability for attention heads
         lsm_prob (float): label smoothing probability
-        ctc_weight (float):
+        ctc_weight (float): CTC loss weight
         ctc_lsm_prob (float): label smoothing probability for CTC
-        ctc_fc_list (list):
+        ctc_fc_list (list): fully-connected layer configuration before the CTC softmax
         backward (bool): decode in the backward order
-        global_weight (float):
-        mtl_per_batch (bool):
+        global_weight (float): global loss weight for multi-task learning
+        mtl_per_batch (bool): change mini-batch per task for multi-task training
         param_init (str): parameter initialization method
         memory_transformer (bool): TransformerXL decoder
         mem_len (int):
-        mocha_chunk_size (int):
-        mocha_n_heads_mono (int):
-        mocha_n_heads_chunk (int):
-        mocha_init_r (int):
-        mocha_eps (float):
-        mocha_std (float):
-        mocha_no_denominator (bool):
+        mocha_chunk_size (int): chunk size for chunkwise attention. -1 means infinite lookback.
+        mocha_n_heads_mono (int): number of hard monotonic attention head
+        mocha_n_heads_chunk (int): number of hard chunkwise attention head
+        mocha_init_r (int): initial bias value for hard monotonic attention
+        mocha_eps (float): epsilon value for hard monotonic attention
+        mocha_std (float): standard deviation of Gaussian noise for hard monotonic attention
+        mocha_no_denominator (bool): remove demominator in hard monotonic attention
         mocha_1dconv (bool): 1dconv for MMA
-        mocha_quantity_loss_weight (float):
-        mocha_head_divergence_loss_weight (float):
-        latency_metric (str):
-        latency_loss_weight (float):
-        mocha_first_layer (int):
-        share_chunkwise_attention (bool):
-        external_lm (RNNLM):
-        lm_fusion (str):
+        mocha_quantity_loss_weight (float): quantity loss weight for MMA
+        mocha_head_divergence_loss_weight (float): head divergence loss for MMA
+        latency_metric (str): latency metric
+        latency_loss_weight (float): latency loss weight for MMA
+        mocha_first_layer (int): first layer to enable source-target attention (start from idx:1)
+        share_chunkwise_attention (bool): share chunkwise attention in the same layer of MMA
+        external_lm (RNNLM): external RNNLM for LM fusion
+        lm_fusion (str): type of LM fusion
 
     """
 
@@ -142,10 +142,10 @@ class TransformerDecoder(DecoderBase):
         # for MMA
         self.attn_type = attn_type
         self.quantity_loss_weight = mocha_quantity_loss_weight
-        self._quantity_loss_weight = 0  # for curriculum
+        self._quantity_loss_weight = mocha_quantity_loss_weight  # for curriculum
         self.mocha_first_layer = max(1, mocha_first_layer)
-
         self.headdiv_loss_weight = mocha_head_divergence_loss_weight
+
         self.latency_metric = latency_metric
         self.latency_loss_weight = latency_loss_weight
         self.ctc_trigger = (self.latency_metric in ['ctc_sync'])
@@ -168,16 +168,16 @@ class TransformerDecoder(DecoderBase):
             self.embed = nn.Embedding(self.vocab, d_model, padding_idx=self.pad)
             self.pos_enc = PositionalEncoding(d_model, dropout_emb, pe_type, param_init)
             # positional embedding
-            self.u = None
-            self.v = None
+            self.u_bias = None
+            self.v_bias = None
             if memory_transformer:
                 self.scale = math.sqrt(d_model)  # for token embedding
                 self.dropout_emb = nn.Dropout(p=dropout_emb)  # for token embedding
                 self.pos_emb = XLPositionalEmbedding(d_model, dropout_emb)
                 if self.mem_len > 0:
-                    self.u = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
-                    self.v = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
-                    # NOTE: u and v are global parameters
+                    self.u_bias = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
+                    self.v_bias = nn.Parameter(torch.Tensor(n_heads, d_model // n_heads))
+                    # NOTE: u_bias and v_bias are global parameters
             # self-attention
             self.layers = nn.ModuleList([copy.deepcopy(TransformerDecoderBlock(
                 d_model, d_ff, attn_type, n_heads, dropout, dropout_att, dropout_layer,
@@ -231,7 +231,7 @@ class TransformerDecoder(DecoderBase):
                                help='parameter initialization')
         # Transformer decoder specific
         group.add_argument('--transformer_attn_type', type=str, default='scaled_dot',
-                           choices=['scaled_dot', 'add', 'mocha'],
+                           choices=['scaled_dot', 'mocha'],
                            help='type of attention mechasnism for Transformer decoder')
         group.add_argument('--transformer_dec_pe_type', type=str, default='add',
                            choices=['add', 'none', '1dconv3L'],
@@ -240,7 +240,7 @@ class TransformerDecoder(DecoderBase):
                            help='LayerDrop probability for Transformer decoder layers')
         group.add_argument('--dropout_head', type=float, default=0.0,
                            help='HeadDrop probability for masking out a head in the Transformer decoder')
-        # streaming
+        # MMA specific
         parser.add_argument('--mocha_n_heads_mono', type=int, default=1,
                             help='number of heads for monotonic attention')
         parser.add_argument('--mocha_n_heads_chunk', type=int, default=1,
@@ -264,7 +264,6 @@ class TransformerDecoder(DecoderBase):
                             help='differentiable latency metric for MMA')
         parser.add_argument('--mocha_latency_loss_weight', type=float, default=0.0,
                             help='latency loss weight for MMA')
-        # MMA specific
         group.add_argument('--mocha_first_layer', type=int, default=1,
                            help='the initial layer to have a MMA function')
         group.add_argument('--mocha_head_divergence_loss_weight', type=float, default=0.0,
@@ -288,7 +287,7 @@ class TransformerDecoder(DecoderBase):
         dir_name += args.transformer_attn_type
 
         # streaming
-        if 'mocha' in args.transformer_attn_type:
+        if args.transformer_attn_type == 'mocha':
             dir_name += '_ma' + str(args.mocha_n_heads_mono) + 'H'
             dir_name += '_ca' + str(args.mocha_n_heads_chunk) + 'H'
             dir_name += '_w' + str(args.mocha_chunk_size)
@@ -479,16 +478,13 @@ class TransformerDecoder(DecoderBase):
         mems = self.init_memory()
         pos_embs = None
         if self.memory_transformer:
-            # NOTE: TransformerXL does not use positional encoding in the token embedding
-            # adopt zero-centered offset
-            pos_idxs = torch.arange(mlen - 1, -ymax - 1, -1.0, dtype=torch.float, device=self.device)
-            pos_embs = self.pos_emb(pos_idxs)
+            pos_embs = self.pos_emb(ys_in, mlen=mlen, zero_center_offset=True)
 
         hidden_states = [out]
         xy_aws_layers = []
         for lth, (mem, layer) in enumerate(zip(mems, self.layers)):
             out = layer(out, tgt_mask, eouts, src_mask, mode='parallel', lmout=lmout,
-                        pos_embs=pos_embs, memory=mem, u=self.u, v=self.v)
+                        pos_embs=pos_embs, memory=mem, u_bias=self.u_bias, v_bias=self.v_bias)
             if lth < self.n_layers - 1:
                 hidden_states.append(out)
                 # NOTE: outputs from the last layer is not used for momory
@@ -553,7 +549,7 @@ class TransformerDecoder(DecoderBase):
 
         """
         bs, xmax = eouts.size()[:2]
-        ys = eouts.new_zeros(bs, 1).fill_(self.eos).long()
+        ys = eouts.new_zeros((bs, 1), dtype=torch.int64).fill_(self.eos)
 
         cache = [None] * self.n_layers
 
@@ -562,8 +558,8 @@ class TransformerDecoder(DecoderBase):
         eos_flags = [False] * bs
         xy_aws_layers_steps = []
         ymax = math.ceil(xmax * max_len_ratio)
-        for t in range(ymax):
-            causal_mask = eouts.new_ones(t + 1, t + 1).byte()
+        for i in range(ymax):
+            causal_mask = eouts.new_ones(i + 1, i + 1).byte()
             causal_mask = torch.tril(causal_mask, out=causal_mask).unsqueeze(0).repeat([bs, 1, 1])
 
             new_cache = [None] * self.n_layers
@@ -594,7 +590,7 @@ class TransformerDecoder(DecoderBase):
             # Break if <eos> is outputed in all mini-batch
             if sum(eos_flags) == bs:
                 break
-            if t == ymax - 1:
+            if i == ymax - 1:
                 break
 
             ys = torch.cat([ys, y], dim=-1)
@@ -706,7 +702,7 @@ class TransformerDecoder(DecoderBase):
         for b in range(bs):
             # Initialization per utterance
             lmstate = None
-            ys = eouts.new_zeros(1, 1).fill_(self.eos).long()
+            ys = eouts.new_zeros((1, 1), dtype=torch.int64).fill_(self.eos)
 
             # For joint CTC-Attention decoding
             ctc_prefix_scorer = None
@@ -740,43 +736,34 @@ class TransformerDecoder(DecoderBase):
                      'streaming_failed_point': 1000}]
             streamable_global = True
             ymax = math.ceil(elens[b] * max_len_ratio)
-            for t in range(ymax):
+            for i in range(ymax):
                 # batchfy all hypotheses for batch decoding
                 cache = [None] * self.n_layers
-                if cache_states and t > 0:
+                if cache_states and i > 0:
                     for lth in range(self.n_layers):
                         cache[lth] = torch.cat([beam['cache'][lth] for beam in hyps], dim=0)
-                ys = eouts.new_zeros(len(hyps), t + 1).long()
+                ys = eouts.new_zeros((len(hyps), i + 1), dtype=torch.int64)
                 for j, beam in enumerate(hyps):
                     ys[j, :] = beam['ys']
-                if t > 0:
+                if i > 0:
                     xy_aws_prev = torch.cat([beam['aws'][-1] for beam in hyps], dim=0)  # `[B, n_layers, H_ma, 1, klen]`
                 else:
                     xy_aws_prev = None
 
                 # Update LM states for shallow fusion
-                lmstate, scores_lm = None, None
-                if lm is not None:
-                    if hyps[0]['lmstate'] is not None:
-                        lm_hxs = torch.cat([beam['lmstate']['hxs'] for beam in hyps], dim=1)
-                        lm_cxs = torch.cat([beam['lmstate']['cxs'] for beam in hyps], dim=1)
-                        lmstate = {'hxs': lm_hxs, 'cxs': lm_cxs}
-                    y = ys[:, -1:].clone()  # NOTE: this is important
-                    _, lmstate, scores_lm = lm.predict(y, lmstate)
+                y_lm = ys[:, -1:].clone()  # NOTE: this is important
+                _, lmstate, scores_lm = helper.update_rnnlm_state_batch(lm, hyps, y_lm)
 
                 # for the main model
-                causal_mask = eouts.new_ones(t + 1, t + 1).byte()
+                causal_mask = eouts.new_ones(i + 1, i + 1).byte()
                 causal_mask = torch.tril(causal_mask, out=causal_mask).unsqueeze(0).repeat([ys.size(0), 1, 1])
 
                 out = self.pos_enc(self.embed(ys))  # scaled + dropout
 
                 mlen = 0  # TODO: fix later
                 if self.memory_transformer:
-                    # NOTE: TransformerXL does not use positional encoding in the token embedding
                     mems = self.init_memory()
-                    # adopt zero-centered offset
-                    pos_idxs = torch.arange(mlen - 1, -(t + 1) - 1, -1.0, dtype=torch.float, device=self.device)
-                    pos_embs = self.pos_emb(pos_idxs)
+                    pos_embs = self.pos_emb(ys, mlen=mlen, zero_center_offset=True)
                     hidden_states = [out]
 
                 n_heads_total = 0
@@ -789,13 +776,13 @@ class TransformerDecoder(DecoderBase):
                         out = layer(
                             out, causal_mask, eouts_b, None,
                             cache=cache[lth],
-                            pos_embs=pos_embs, memory=mems[lth], u=self.u, v=self.v)
+                            pos_embs=pos_embs, memory=mems[lth], u_bias=self.u_bias, v_bias=self.v_bias)
                         hidden_states.append(out)
                     else:
                         out = layer(
                             out, causal_mask, eouts_b, None,
                             cache=cache[lth],
-                            xy_aws_prev=xy_aws_prev[:, lth - lth_s] if lth >= lth_s and t > 0 else None,
+                            xy_aws_prev=xy_aws_prev[:, lth - lth_s] if lth >= lth_s and i > 0 else None,
                             eps_wait=eps_wait)
 
                     new_cache[lth] = out
@@ -807,7 +794,7 @@ class TransformerDecoder(DecoderBase):
 
                 # Ensemble initialization
                 ensmbl_cache = [[None] * dec.n_layers for dec in ensmbl_decs]
-                if n_models > 1 and cache_states and t > 0:
+                if n_models > 1 and cache_states and i > 0:
                     for i_e, dec in enumerate(ensmbl_decs):
                         for lth in range(dec.n_layers):
                             ensmbl_cache[i_e][lth] = torch.cat([beam['ensmbl_cache'][i_e][lth] for beam in hyps], dim=0)
@@ -875,7 +862,7 @@ class TransformerDecoder(DecoderBase):
 
                         quantity_rate = 1.
                         if self.attn_type == 'mocha':
-                            n_tokens_hyp_k = t + 1
+                            n_tokens_hyp_k = i + 1
                             n_quantity_k = aws_j[:, :, :, :n_tokens_hyp_k].int().sum().item()
                             quantity_diff = n_tokens_hyp_k * n_heads_total - n_quantity_k
 
@@ -891,11 +878,11 @@ class TransformerDecoder(DecoderBase):
                                     quantity_rate = n_quantity_k / (n_tokens_hyp_k * n_heads_total)
 
                             if beam['streamable'] and not streamable_global:
-                                streaming_failed_point = t
+                                streaming_failed_point = i
 
                         new_hyps.append(
                             {'hyp': beam['hyp'] + [idx],
-                             'ys': torch.cat([beam['ys'], eouts.new_zeros(1, 1).fill_(idx).long()], dim=-1),
+                             'ys': torch.cat([beam['ys'], eouts.new_zeros((1, 1), dtype=torch.int64).fill_(idx)], dim=-1),
                              'cache': [new_cache_l[j:j + 1] for new_cache_l in new_cache] if cache_states else cache,
                              'score': total_score,
                              'score_att': total_scores_att[0, idx].item(),

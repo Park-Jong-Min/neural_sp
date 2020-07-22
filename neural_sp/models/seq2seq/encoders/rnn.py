@@ -33,7 +33,7 @@ class RNNEncoder(EncoderBase):
 
     Args:
         input_dim (int): dimension of input features (freq * channel)
-        rnn_type (str): type of encoder (including pure CNN layers)
+        enc_type (str): type of encoder (including pure CNN layers)
         n_units (int): number of units in each layer
         n_projs (int): number of units in each projection layer
         last_proj_dim (int): dimension of the last projection layer
@@ -48,13 +48,13 @@ class RNNEncoder(EncoderBase):
         n_stacks (int): number of frames to stack
         n_splices (int): number of frames to splice
         conv_in_channel (int): number of channels of input features
-        conv_channels (int): number of channles in the CNN blocks
-        conv_kernel_sizes (list): size of kernels in the CNN blocks
-        conv_strides (list): number of strides in the CNN blocks
-        conv_poolings (list): size of poolings in the CNN blocks
-        conv_batch_norm (bool): apply batch normalization only in the CNN blocks
-        conv_layer_norm (bool): apply layer normalization only in the CNN blocks
-        conv_bottleneck_dim (int): dimension of the bottleneck layer between CNN and RNN layers
+        conv_channels (int): number of channles in CNN blocks
+        conv_kernel_sizes (list): size of kernels in CNN blocks
+        conv_strides (list): number of strides in CNN blocks
+        conv_poolings (list): size of poolings in CNN blocks
+        conv_batch_norm (bool): apply batch normalization only in CNN blocks
+        conv_layer_norm (bool): apply layer normalization only in CNN blocks
+        conv_bottleneck_dim (int): dimension of bottleneck layer between CNN and RNN layers
         bidir_sum_fwd_bwd (bool): sum up forward and backward outputs for demiension reduction
         task_specific_layer (bool): add a task specific layer for each sub task
         param_init (float): model initialization parameter
@@ -63,7 +63,7 @@ class RNNEncoder(EncoderBase):
 
     """
 
-    def __init__(self, input_dim, rnn_type, n_units, n_projs, last_proj_dim,
+    def __init__(self, input_dim, enc_type, n_units, n_projs, last_proj_dim,
                  n_layers, n_layers_sub1, n_layers_sub2,
                  dropout_in, dropout,
                  subsample, subsample_type, n_stacks, n_splices,
@@ -89,8 +89,8 @@ class RNNEncoder(EncoderBase):
             raise ValueError('Set n_layers_sub2 between 1 to n_layers_sub1. n_layers_sub1: %d, n_layers_sub2: %d' %
                              (n_layers_sub1, n_layers_sub2))
 
-        self.rnn_type = rnn_type
-        self.bidirectional = True if ('blstm' in rnn_type or 'bgru' in rnn_type) else False
+        self.enc_type = enc_type
+        self.bidirectional = True if ('blstm' in enc_type or 'bgru' in enc_type) else False
         self.n_units = n_units
         self.n_dirs = 2 if self.bidirectional else 1
         self.n_layers = n_layers
@@ -101,8 +101,7 @@ class RNNEncoder(EncoderBase):
         self.chunk_size_right = chunk_size_right // n_stacks
         self.lc_bidir = self.chunk_size_left > 0 or self.chunk_size_right > 0
         if self.lc_bidir:
-            assert np.prod(subsamples) == 1
-            assert rnn_type not in ['lstm', 'gru', 'conv_lstm', 'conv_gru']
+            assert enc_type not in ['lstm', 'gru', 'conv_lstm', 'conv_gru']
             assert n_layers_sub2 == 0
 
         # for hierarchical encoder
@@ -118,7 +117,7 @@ class RNNEncoder(EncoderBase):
         # Dropout for input-hidden connection
         self.dropout_in = nn.Dropout(p=dropout_in)
 
-        if 'conv' in rnn_type:
+        if 'conv' in enc_type:
             assert n_stacks == 1 and n_splices == 1
             self.conv = ConvEncoder(input_dim,
                                     in_channel=conv_in_channel,
@@ -132,33 +131,27 @@ class RNNEncoder(EncoderBase):
                                     residual=False,
                                     bottleneck_dim=conv_bottleneck_dim,
                                     param_init=param_init)
+            self._odim = self.conv.output_dim
         else:
             self.conv = None
-
-        if self.conv is None:
             self._odim = input_dim * n_splices * n_stacks
-        else:
-            self._odim = self.conv.output_dim
-            subsamples = [1] * self.n_layers
-            logger.warning('Subsampling is automatically ignored because CNN layers are used before RNN layers.')
 
-        self.padding = Padding(bidir_sum_fwd_bwd=bidir_sum_fwd_bwd)
-
-        if rnn_type not in ['conv', 'tds', 'gated_conv']:
+        if enc_type != 'conv':
             self.rnn = nn.ModuleList()
             if self.lc_bidir:
                 self.rnn_bwd = nn.ModuleList()
             self.dropout = nn.Dropout(p=dropout)
             self.proj = nn.ModuleList() if n_projs > 0 else None
             self.subsample = nn.ModuleList() if np.prod(subsamples) > 1 else None
+            self.padding = Padding(bidir_sum_fwd_bwd=bidir_sum_fwd_bwd)
 
             for lth in range(n_layers):
-                if 'lstm' in rnn_type:
+                if 'lstm' in enc_type:
                     rnn_i = nn.LSTM
-                elif 'gru' in rnn_type:
+                elif 'gru' in enc_type:
                     rnn_i = nn.GRU
                 else:
-                    raise ValueError('rnn_type must be "(conv_)(b)lstm" or "(conv_)(b)gru".')
+                    raise ValueError('enc_type must be "(conv_)(b)lstm" or "(conv_)(b)gru".')
 
                 if self.lc_bidir:
                     self.rnn += [rnn_i(self._odim, n_units, 1, batch_first=True)]
@@ -257,7 +250,7 @@ class RNNEncoder(EncoderBase):
         """Initialize parameters with uniform distribution."""
         logger.info('===== Initialize %s with uniform distribution =====' % self.__class__.__name__)
         for n, p in self.named_parameters():
-            if 'conv' in n or 'tds' in n or 'gated_conv' in n:
+            if 'conv' in n:
                 continue  # for CNN layers before RNN layers
             init_with_uniform(n, p, param_init)
 
@@ -265,16 +258,16 @@ class RNNEncoder(EncoderBase):
         self.hx_fwd = [None] * self.n_layers
         logger.debug('Reset cache.')
 
-    def forward(self, xs, xlens, task, use_cache=False, streaming=False,
-                lookback=False, lookahead=False):
-        """Forward computation.
+    def forward(self, xs, xlens, task, streaming=False, lookback=False, lookahead=False):
+        """Forward pass.
 
         Args:
             xs (FloatTensor): `[B, T, input_dim]`
             xlens (list): A list of length `[B]`
             task (str): all or ys or ys_sub1 or ys_sub2
-            use_cache (bool): use the cached forward encoder state in the previous chunk as the initial state
             streaming (bool): streaming encoding
+            lookback (bool): truncate leftmost frames for lookback in CNN context
+            lookahead (bool): truncate rightmost frames for lookahead in CNN context
         Returns:
             eouts (dict):
                 xs (FloatTensor): `[B, T // prod(subsample), n_units (*2)]`
@@ -303,13 +296,14 @@ class RNNEncoder(EncoderBase):
         # Path through CNN blocks before RNN layers
         if self.conv is not None:
             xs, xlens = self.conv(xs, xlens, lookback=lookback, lookahead=lookahead)
-            if self.rnn_type in ['conv', 'tds', 'gated_conv']:
+            if self.enc_type == 'conv':
                 eouts['ys']['xs'] = xs
                 eouts['ys']['xlens'] = xlens
                 return eouts
 
-        if not use_cache and not streaming:
+        if not streaming:
             self.reset_cache()
+            # NOTE: do not reset here for streaming inference
 
         if self.lc_bidir:
             # Flip the layer and time loop
@@ -339,13 +333,12 @@ class RNNEncoder(EncoderBase):
                         eouts[task]['xs'], eouts[task]['xlens'] = xs_sub2, xlens_sub2
                         return eouts
 
-                # NOTE: Exclude the last layer
-                if lth != self.n_layers - 1:
-                    # Projection layer -> Subsampling
-                    if self.proj is not None:
-                        xs = torch.tanh(self.proj[lth](xs))
-                    if self.subsample is not None:
-                        xs, xlens = self.subsample[lth](xs, xlens)
+                # Projection layer
+                if self.proj is not None and lth != self.n_layers - 1:
+                    xs = torch.tanh(self.proj[lth](xs))
+                # Subsampling layer
+                if self.subsample is not None:
+                    xs, xlens = self.subsample[lth](xs, xlens)
 
         # Bridge layer
         if self.bridge is not None:
@@ -400,24 +393,33 @@ class RNNEncoder(EncoderBase):
                     if task == 'ys_sub1':
                         return None, xlens, xs_sub1
 
-                # Projection layer (exclude the last layer)
+                # Projection layer
                 if self.proj is not None and lth != self.n_layers - 1:
                     xs = torch.tanh(self.proj[lth](xs))
+                # Subsampling layer
+                if self.subsample is not None:
+                    xs, xlens = self.subsample[lth](xs, xlens)
 
             return xs, xlens, xs_sub1
 
-        _N_l = self.chunk_size_left // self.subsampling_factor
-        _N_r = self.chunk_size_right // self.subsampling_factor
+        N_l = self.chunk_size_left
+        N_r = self.chunk_size_right
+
+        if self.conv is not None:
+            N_l = N_l // self.conv.subsampling_factor
+            N_r = N_r // self.conv.subsampling_factor
 
         bs, xmax, _ = xs.size()
-        n_chunks = math.ceil(xmax / _N_l)
+        n_chunks = math.ceil(xmax / N_l)
         if streaming:
-            xlens = torch.IntTensor(bs).fill_(xs.size(1))
+            xlens = torch.IntTensor(bs).fill_(xs.size(1) if xmax < N_l else N_l)
 
         xs_chunks = []
         xs_chunks_sub1 = []
-        for chunk_idx, t in enumerate(range(0, _N_l * n_chunks, _N_l)):
-            xs_chunk = xs[:, t:t + (_N_l + _N_r)]
+        for chunk_idx, t in enumerate(range(0, N_l * n_chunks, N_l)):
+            xs_chunk = xs[:, t:t + (N_l + N_r)]
+            _N_l = N_l
+
             for lth in range(self.n_layers):
                 self.rnn[lth].flatten_parameters()  # for multi-GPUs
                 self.rnn_bwd[lth].flatten_parameters()  # for multi-GPUs
@@ -450,9 +452,15 @@ class RNNEncoder(EncoderBase):
                     if task == 'ys_sub1':
                         return None, xlens, xs_chunk_sub1
 
-                # Projection layer (exclude the last layer)
+                # Projection layer
                 if self.proj is not None and lth != self.n_layers - 1:
                     xs_chunk = torch.tanh(self.proj[lth](xs_chunk))
+                # Subsampling layer
+                if self.subsample is not None:
+                    xs_chunk, xlens_tmp = self.subsample[lth](xs_chunk, xlens)
+                    if chunk_idx == 0:
+                        xlens = xlens_tmp
+                    _N_l = _N_l // self.subsample[lth].subsampling_factor
 
             xs_chunks.append(xs_chunk[:, :_N_l])
             if self.n_layers_sub1 > 0:

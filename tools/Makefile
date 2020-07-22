@@ -26,7 +26,7 @@ CONDA=$(TOOL)/miniconda
 
 .PHONY: all clean
 
-all: miniconda.done kaldi.done python check_install extra
+all: miniconda.done kaldi.done python extra
 python: neural_sp.done warp-ctc.done
 extra: sentencepiece.done nkf.done moses.done mwerSegmenter.done
 
@@ -93,9 +93,6 @@ warp-transducer.done:
 	. $(CONDA)/bin/activate; cd $(TOOL)/warp-transducer && mkdir build && cd build && cmake .. && $(MAKE); true
 	. $(CONDA)/bin/activate; cd $(TOOL)/warp-transducer/pytorch_binding && python setup.py install
 	touch warp-transducer.done
-
-check_install:
-	. $(CONDA)/bin/activate; python check_install.py
 
 sentencepiece.done:
 	if [ -e $(TOOL)/sentencepiece ]; then rm -rf $(TOOL)/sentencepiece; fi

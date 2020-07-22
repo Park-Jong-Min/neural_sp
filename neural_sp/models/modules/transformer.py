@@ -24,31 +24,31 @@ logger = logging.getLogger(__name__)
 class TransformerDecoderBlock(nn.Module):
     """A single layer of the Transformer decoder.
 
-        Args:
-            d_model (int): input dimension of MultiheadAttentionMechanism and PositionwiseFeedForward
-            d_ff (int): hidden dimension of PositionwiseFeedForward
-            atype (str): type of attention mechanism
-            n_heads (int): number of heads for multi-head attention
-            dropout (float): dropout probabilities for linear layers
-            dropout_att (float): dropout probabilities for attention probabilities
-            dropout_layer (float): LayerDrop probability
-            dropout_head (float): HeadDrop probability
-            layer_norm_eps (float): epsilon parameter for layer normalization
-            ffn_activation (str): nonolinear function for PositionwiseFeedForward
-            param_init (str): parameter initialization method
-            src_tgt_attention (bool): if False, ignore source-target attention
-            memory_transformer (bool): TransformerXL decoder
-            mocha_chunk_size (int): chunk size for MoChA. -1 means infinite lookback.
-            mocha_n_heads_mono (int): number of heads for monotonic attention
-            mocha_n_heads_chunk (int): number of heads for chunkwise attention
-            mocha_init_r (int):
-            mocha_eps (float):
-            mocha_std (float):
-            mocha_no_denominator (bool):
-            mocha_1dconv (bool):
-            lm_fusion (bool):
-            ffn_bottleneck_dim (int): bottleneck dimension for the light-weight FFN layer
-            share_chunkwise_attention (bool):
+    Args:
+        d_model (int): input dimension of MultiheadAttentionMechanism and PositionwiseFeedForward
+        d_ff (int): hidden dimension of PositionwiseFeedForward
+        atype (str): type of attention mechanism
+        n_heads (int): number of heads for multi-head attention
+        dropout (float): dropout probabilities for linear layers
+        dropout_att (float): dropout probabilities for attention probabilities
+        dropout_layer (float): LayerDrop probability
+        dropout_head (float): HeadDrop probability
+        layer_norm_eps (float): epsilon parameter for layer normalization
+        ffn_activation (str): nonolinear function for PositionwiseFeedForward
+        param_init (str): parameter initialization method
+        src_tgt_attention (bool): use source-target attention
+        memory_transformer (bool): TransformerXL decoder
+        mocha_chunk_size (int): chunk size for chunkwise attention. -1 means infinite lookback.
+        mocha_n_heads_mono (int): number of hard monotonic attention head
+        mocha_n_heads_chunk (int): number of hard chunkwise attention head
+        mocha_init_r (int): initial bias value for hard monotonic attention
+        mocha_eps (float): epsilon value for hard monotonic attention
+        mocha_std (float): standard deviation of Gaussian noise for hard monotonic attention
+        mocha_no_denominator (bool): remove demominator in hard monotonic attention
+        mocha_1dconv (bool): 1dconv for MMA
+        share_chunkwise_attention (bool): share chunkwise attention in the same layer of MMA
+        lm_fusion (str): type of LM fusion
+        ffn_bottleneck_dim (int): bottleneck dimension for the light-weight FFN layer
 
     """
 
@@ -59,9 +59,10 @@ class TransformerDecoderBlock(nn.Module):
                  mocha_chunk_size=0, mocha_n_heads_mono=1, mocha_n_heads_chunk=1,
                  mocha_init_r=2, mocha_eps=1e-6, mocha_std=1.0,
                  mocha_no_denominator=False, mocha_1dconv=False,
-                 dropout_head=0, lm_fusion=False, ffn_bottleneck_dim=0,
-                 share_chunkwise_attention=False):
-        super(TransformerDecoderBlock, self).__init__()
+                 dropout_head=0, share_chunkwise_attention=False,
+                 lm_fusion='', ffn_bottleneck_dim=0):
+
+        super().__init__()
 
         self.atype = atype
         self.n_heads = n_heads
@@ -77,7 +78,9 @@ class TransformerDecoderBlock(nn.Module):
                              odim=d_model,
                              n_heads=n_heads,
                              dropout=dropout_att,
-                             param_init=param_init)
+                             dropout_head=dropout_head,
+                             param_init=param_init,
+                             xl_like=memory_transformer)
 
         # attention over encoder stacks
         if src_tgt_attention:
@@ -165,8 +168,9 @@ class TransformerDecoderBlock(nn.Module):
         self._yy_aws_lm = None
 
     def forward(self, ys, yy_mask, xs=None, xy_mask=None, cache=None,
-                xy_aws_prev=None, mode='hard', eps_wait=-1, lmout=None,
-                pos_embs=None, memory=None, u=None, v=None):
+                xy_aws_prev=None,
+                mode='hard', eps_wait=-1, lmout=None,
+                pos_embs=None, memory=None, u_bias=None, v_bias=None):
         """Transformer decoder forward pass.
 
         Args:
@@ -181,9 +185,8 @@ class TransformerDecoderBlock(nn.Module):
             lmout (FloatTensor): `[B, L, d_model]`
             pos_embs (LongTensor): `[L, 1, d_model]`
             memory (FloatTensor): `[B, L_prev, d_model]`
-            u (FloatTensor): global parameter for TransformerXL
-            v (FloatTensor): global parameter for TransformerXL
-            eps_wait (int): wait time delay for head-synchronous decoding in MMA
+            u_bias (FloatTensor): global parameter for TransformerXL
+            v_bias (FloatTensor): global parameter for TransformerXL
         Returns:
             out (FloatTensor): `[B, L, d_model]`
 
@@ -191,11 +194,21 @@ class TransformerDecoderBlock(nn.Module):
         self.reset_visualization()
 
         # LayerDrop
-        if self.dropout_layer > 0 and self.training and random.random() >= self.dropout_layer:
+        if self.dropout_layer > 0 and self.training and random.random() < self.dropout_layer:
             return ys
 
         residual = ys
-        ys = self.norm1(ys)
+        if self.memory_transformer:
+            if cache is not None:
+                pos_embs = pos_embs[-ys.size(1):]
+            if memory is not None and memory.dim() > 1:
+                cat = self.norm1(torch.cat([memory, ys], dim=1))
+                ys = cat[:, memory.size(1):]
+            else:
+                ys = self.norm1(ys)
+                cat = ys
+        else:
+            ys = self.norm1(ys)
 
         if cache is not None:
             ys_q = ys[:, -1:]
@@ -206,9 +219,7 @@ class TransformerDecoderBlock(nn.Module):
 
         # self-attention
         if self.memory_transformer:
-            if cache is not None:
-                pos_embs = pos_embs[-ys_q.size(1):]
-            out, self._yy_aws = self.self_attn(ys, ys_q, memory, pos_embs, yy_mask, u, v)
+            out, self._yy_aws = self.self_attn(cat, ys_q, pos_embs, yy_mask, u_bias, v_bias)
         else:
             out, self._yy_aws = self.self_attn(ys, ys, ys_q, mask=yy_mask)[:2]  # k/v/q
         out = self.dropout(out) + residual
@@ -252,23 +263,24 @@ class TransformerDecoderBlock(nn.Module):
 class SyncBidirTransformerDecoderBlock(nn.Module):
     """A single layer of the synchronous bidirectional Transformer decoder.
 
-        Args:
-            d_model (int): input dimension of MultiheadAttentionMechanism and PositionwiseFeedForward
-            d_ff (int): hidden dimension of PositionwiseFeedForward
-            n_heads (int): number of heads for multi-head attention
-            dropout (float): dropout probabilities for linear layers
-            dropout_att (float): dropout probabilities for attention probabilities
-            dropout_layer (float): LayerDrop probability
-            layer_norm_eps (float): epsilon parameter for layer normalization
-            ffn_activation (str): nonolinear function for PositionwiseFeedForward
-            param_init (str): parameter initialization method
+    Args:
+        d_model (int): input dimension of MultiheadAttentionMechanism and PositionwiseFeedForward
+        d_ff (int): hidden dimension of PositionwiseFeedForward
+        n_heads (int): number of heads for multi-head attention
+        dropout (float): dropout probabilities for linear layers
+        dropout_att (float): dropout probabilities for attention probabilities
+        dropout_layer (float): LayerDrop probability
+        layer_norm_eps (float): epsilon parameter for layer normalization
+        ffn_activation (str): nonolinear function for PositionwiseFeedForward
+        param_init (str): parameter initialization method
 
     """
 
     def __init__(self, d_model, d_ff, n_heads,
                  dropout, dropout_att, dropout_layer,
                  layer_norm_eps, ffn_activation, param_init):
-        super(SyncBidirTransformerDecoderBlock, self).__init__()
+
+        super().__init__()
 
         self.n_heads = n_heads
 

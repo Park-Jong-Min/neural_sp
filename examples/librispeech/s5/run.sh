@@ -71,6 +71,9 @@ if [ -z ${gpu} ]; then
     exit 1
 fi
 n_gpus=$(echo ${gpu} | tr "," "\n" | wc -l)
+if [ ${n_gpus} != 1 ]; then
+    export OMP_NUM_THREADS=${n_gpus}
+fi
 
 # Base url for downloads.
 data_url=www.openslr.org/resources/12
@@ -155,10 +158,12 @@ if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ] && [ ! -e ${data}/.done_stage_1
 
     if [ ${speed_perturb} = true ]; then
         speed_perturb_3way.sh ${data} train_${datasize} ${train_set}
-        cp -rf ${data}/dev_clean ${data}/dev_clean_sp
-        cp -rf ${data}/dev_other ${data}/dev_other_sp
-        cp -rf ${data}/test_clean ${data}/test_clean_sp
-        cp -rf ${data}/test_other ${data}/test_other_sp
+        if [ ! -e ${data}/dev_clean_sp ]; then
+            cp -rf ${data}/dev_clean ${data}/dev_clean_sp
+            cp -rf ${data}/dev_other ${data}/dev_other_sp
+            cp -rf ${data}/test_clean ${data}/test_clean_sp
+            cp -rf ${data}/test_other ${data}/test_other_sp
+        fi
     fi
 
     # Compute global CMVN
