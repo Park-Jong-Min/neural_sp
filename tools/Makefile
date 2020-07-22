@@ -1,8 +1,8 @@
 # If a Python interpreter is specified, then creates a virtualenv from it
 # PYTHON := /usr/bin/python3.7
-PYTHON :=
+PYTHON := /home/jmpark/.conda/envs/asr/bin/python
 # The python version installed in the conda setup
-PYTHON_VERSION := 3.7.6
+PYTHON_VERSION := 3.7.7
 CUDA_VERSION := 10.1
 PYTORCH_VERSION := 1.5.1
 # Use a prebuild Kaldi to omit the installation
