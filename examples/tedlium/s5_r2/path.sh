@@ -1,6 +1,6 @@
 export NEURALSP_ROOT=$PWD/../../..
-export TOOL=/home/inaguma/tool/neural_sp_v2
-export CONDA=$TOOL/miniconda
+export TOOL=/home/jmpark/github_local/neural_sp/tools
+# export CONDA=$TOOL/miniconda
 export KALDI_ROOT=$TOOL/kaldi
 
 # Kaldi
@@ -12,7 +12,7 @@ export PATH=$TOOL/mwerSegmenter/:$TOOL/moses/scripts/tokenizer/:$TOOL/moses/scri
 export LC_ALL=C
 
 ### Python
-source $CONDA/etc/profile.d/conda.sh && conda deactivate && conda activate
+# source $CONDA/etc/profile.d/conda.sh && conda deactivate && conda activate
 export PYTHONDONTWRITEBYTECODE=1
 export OMP_NUM_THREADS=1
 

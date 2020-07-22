@@ -7,7 +7,7 @@ echo ===========================================================================
 echo "                                TEDLIUM2                                  "
 echo ============================================================================
 
-stage=0
+stage=5
 stop_stage=5
 gpu=
 benchmark=true
@@ -22,7 +22,7 @@ wp_type=bpe  # bpe/unigram (for wordpiece)
 #########################
 # ASR configuration
 #########################
-conf=conf/asr/blstm_las.yaml
+conf=conf/asr/mocha/lstm_mocha.yaml
 conf2=
 asr_init=
 external_lm=
@@ -33,17 +33,17 @@ external_lm=
 lm_conf=conf/lm/rnnlm.yaml
 
 ### path to save the model
-model=/n/work1/inaguma/results/tedlium2
+model=/home2/jmpark/neural_data/ted
 
 ### path to the model directory to resume training
 resume=
 lm_resume=
 
 ### path to save preproecssed data
-export data=/n/work1/inaguma/corpus/tedlium2
+export data=/home2/jmpark/neural_data/ted
 
 ### path to original data
-export db=/n/rd21/corpora_7/tedlium
+export db=/home2/jmpark/TEDLIUM
 
 . ./cmd.sh
 . ./path.sh
@@ -229,4 +229,29 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
         --resume ${resume} || exit 1;
 
     echo "Finish ASR model training (stage: 4)."
+fi
+
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+    echo ============================================================================
+    echo "                       ASR Decoding stage (stage:5)                        "
+    echo ============================================================================
+
+    CUDA_VISIBLE_DEVICES=${gpu} ${NEURALSP_ROOT}/neural_sp/bin/asr/decode_jm.py \
+        --corpus tedlium2 \
+        --config ${conf} \
+        --config2 ${conf2} \
+        --n_gpus ${n_gpus} \
+        --cudnn_benchmark ${benchmark} \
+        --dev_set ${data}/dataset/${dev_set}_${unit}${wp_type}${vocab}.tsv \
+        --eval_sets ${data}/dataset/${test_set}_${unit}${wp_type}${vocab}.tsv \
+        --unit ${unit} \
+        --dict ${dict} \
+        --wp_model ${wp_model}.model \
+        --model_save_dir ${model}/asr \
+        --asr_init ${asr_init} \
+        --external_lm ${external_lm} \
+        --stdout ${stdout} \
+        --resume ${resume} || exit 1;
+
+    echo "Finish ASR model decoding (stage: 5)."
 fi

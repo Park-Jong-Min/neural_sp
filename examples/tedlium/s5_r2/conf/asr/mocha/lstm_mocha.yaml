@@ -33,7 +33,7 @@ emb_dim: 512
 tie_embedding: false
 ctc_fc_list: "512"
 ### optimization
-batch_size: 30
+batch_size: 60
 optimizer: adam
 n_epochs: 35  # 20->35
 convert_to_sgd_epoch: 100
