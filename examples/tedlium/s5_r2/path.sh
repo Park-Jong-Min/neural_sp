@@ -13,14 +13,14 @@ export LC_ALL=C
 
 ### Python
 # source $CONDA/etc/profile.d/conda.sh && conda deactivate && conda activate
-export PYTHONDONTWRITEBYTECODE=1
-export OMP_NUM_THREADS=1
+# export PYTHONDONTWRITEBYTECODE=1
+# export OMP_NUM_THREADS=1
 
 ### CUDA
-CUDAROOT=/usr/local/cuda
-NCCL_ROOT=/usr/local/nccl
-export CPATH=$NCCL_ROOT/include:$CPATH
-export LD_LIBRARY_PATH=$NCCL_ROOT/lib/:$CUDAROOT/lib64:$LD_LIBRARY_PATH
-export LIBRARY_PATH=$NCCL_ROOT/lib/:$LIBRARY_PATH
-export CUDA_HOME=$CUDAROOT
-export CUDA_PATH=$CUDAROOT
+# CUDAROOT=/usr/local/cuda
+# NCCL_ROOT=/usr/local/nccl
+# export CPATH=$NCCL_ROOT/include:$CPATH
+# export LD_LIBRARY_PATH=$NCCL_ROOT/lib/:$CUDAROOT/lib64:$LD_LIBRARY_PATH
+# export LIBRARY_PATH=$NCCL_ROOT/lib/:$LIBRARY_PATH
+# export CUDA_HOME=$CUDAROOT
+# export CUDA_PATH=$CUDAROOT

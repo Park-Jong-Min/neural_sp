@@ -8,7 +8,7 @@ echo "                                TEDLIUM2                                  
 echo ============================================================================
 
 stage=5
-stop_stage=5
+stop_stage=100
 gpu=
 benchmark=true
 speed_perturb=true  # default
@@ -36,7 +36,7 @@ lm_conf=conf/lm/rnnlm.yaml
 model=/home2/jmpark/neural_data/ted
 
 ### path to the model directory to resume training
-resume=
+resume=/home2/jmpark/neural_data/ted/asr/train_sp_wpbpe10000/conv2Llstm1024H5L_drop4_lstm1024H1L_mocha_w4_temp1.0_quantity2.0_adam_lr0.001_bs60_ls0.1_warmup4000_ctc0.3/
 lm_resume=
 
 ### path to save preproecssed data
@@ -235,7 +235,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
     echo ============================================================================
     echo "                       ASR Decoding stage (stage:5)                        "
     echo ============================================================================
-
+    
     CUDA_VISIBLE_DEVICES=${gpu} ${NEURALSP_ROOT}/neural_sp/bin/asr/decode_jm.py \
         --corpus tedlium2 \
         --config ${conf} \
