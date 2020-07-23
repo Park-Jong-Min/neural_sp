@@ -24,7 +24,7 @@ requirements = {
         'setproctitle>=1.1.10',
         'tensorboardX>=2.0',
         'tqdm>=4.42.0',
-        'torch==1.0.0',
+        'torch>=1.0.0',
     ],
     'setup': [
 
@@ -47,7 +47,7 @@ extras_require = {k: v for k, v in requirements.items()
 dirname = os.path.dirname(__file__)
 setup(name='neural_sp',
       version='0.1.0',
-      url='http://github.com/neural_sp/neural_sp',
+      url='http://github.com/Park-Jong-Min/neural_sp.git',
       author='Hirofumi Inaguma',
       author_email='hiro.mhbc@gmail.com',
       description='NeuralSP: Neural network based end-to-end Speech Processing toolkit',
